@@ -141,8 +141,8 @@ async function updateDb(dbClient: Client, trees: TreeRecord[]) {
     await dbClient.query(`
         update trees
         set
-            lat = updated_trees_tmp.lat,
-            lng = updated_trees_tmp.lng,
+            lat = updated_trees_tmp.lng, -- HINT: latitude and longitude are swapped on purpose 
+            lng = updated_trees_tmp.lat, -- due to a known bug in GdK sources: https://github.com/technologiestiftung/giessdenkiez-de-postgres-api/issues/67
             artdtsch = updated_trees_tmp.artdtsch,
             artbot = updated_trees_tmp.artbot,
             gattungdeutsch = updated_trees_tmp.gattungdeutsch,
@@ -170,8 +170,8 @@ async function addToDb(dbClient: Client, trees: TreeRecord[]) {
         insert into trees (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
                            baumhoehe, pflanzjahr, geom, gmlid)
         select id,
-               lat,
-               lng,
+               lng, -- HINT: latitude and longitude are swapped on purpose
+               lat, -- due to a known bug in GdK sources: https://github.com/technologiestiftung/giessdenkiez-de-postgres-api/issues/67
                artdtsch,
                artbot,
                gattungdeutsch,
