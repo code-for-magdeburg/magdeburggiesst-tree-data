@@ -31,3 +31,13 @@ export type TreeDbRecord = {
     pflanzjahr: number;
     gmlid: string;
 };
+
+
+export type TreeClassification = {
+    fullname: string;
+    genus: string;
+    species: string;
+    variety: string;
+    common: string;
+    scientific: string;
+};
