@@ -26,9 +26,7 @@ async function readOldTreeData(dbClient: Client): Promise<TreeDbRecord[]> {
 async function compareTreeData(newTrees: TreeRecord[], oldTrees: TreeDbRecord[]): Promise<TreeDataComparisonResult> {
 
     const deletedTrees = oldTrees.filter(oldTree => !newTrees.some(newTree => newTree.ref === oldTree.gmlid));
-    const updatedTrees = newTrees.filter((newTree, index) =>
-        oldTrees.some(oldTree => oldTree.gmlid === newTree.ref)
-    );
+    const updatedTrees = newTrees.filter(newTree => oldTrees.some(oldTree => oldTree.gmlid === newTree.ref));
     const addedTrees = newTrees.filter(newTree => !oldTrees.some(oldTree => oldTree.gmlid === newTree.ref));
 
     return {
@@ -74,7 +72,7 @@ async function deleteFromDb(dbClient: Client, trees: TreeDbRecord[]) {
             id text not null primary key
         );
     `);
-    
+
     await dbClient.query(`
         delete from trees_adopted
         where tree_id in (select id from deleted_trees_tmp)
