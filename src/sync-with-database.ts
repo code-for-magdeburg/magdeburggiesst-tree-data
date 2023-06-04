@@ -12,8 +12,8 @@ dotenv.config();
 
 type TreeDataComparisonResult = {
     deletedTrees: TreeDbRecord[];
-    updatedTrees: TreeRecord[];
-    addedTrees: TreeRecord[];
+    updatedTrees: TreeDbRecord[];
+    addedTrees: TreeDbRecord[];
 };
 
 
@@ -23,11 +23,40 @@ async function readOldTreeData(dbClient: Client): Promise<TreeDbRecord[]> {
 }
 
 
-async function compareTreeData(newTrees: TreeRecord[], oldTrees: TreeDbRecord[]): Promise<TreeDataComparisonResult> {
+async function compareTreeData(newTrees: TreeDbRecord[], oldTrees: TreeDbRecord[]): Promise<TreeDataComparisonResult> {
 
-    const deletedTrees = oldTrees.filter(oldTree => !newTrees.some(newTree => newTree.ref === oldTree.gmlid));
-    const updatedTrees = newTrees.filter(newTree => oldTrees.some(oldTree => oldTree.gmlid === newTree.ref));
-    const addedTrees = newTrees.filter(newTree => !oldTrees.some(oldTree => oldTree.gmlid === newTree.ref));
+    const treesAreSame = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean => tree1.gmlid === tree2.gmlid;
+    const treesAreEqual = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean =>
+        tree1.lat !== tree2.lng
+        || tree1.lng !== tree2.lat
+        || tree1.artdtsch !== tree2.artdtsch
+        || tree1.artbot !== tree2.artbot
+        || tree1.gattungdeutsch !== tree2.gattungdeutsch
+        || tree1.gattung !== tree2.gattung
+        || tree1.strname !== tree2.strname
+        || tree1.kronedurch !== tree2.kronedurch
+        || tree1.stammumfg !== tree2.stammumfg
+        || tree1.baumhoehe !== tree2.baumhoehe
+        || tree1.pflanzjahr !== tree2.pflanzjahr
+        //|| tree1.geom !== tree2.geom
+    ;
+
+    console.log('Start finding deleted trees: ', new Date().toISOString());
+    const deletedTrees = oldTrees.filter(
+        oldTree => !newTrees.some(newTree => treesAreSame(oldTree, newTree))
+    );
+
+    console.log('Start finding changed trees: ', new Date().toISOString());
+    const updatedTrees = newTrees.filter(newTree =>
+        oldTrees.some(oldTree => treesAreSame(oldTree, newTree) && treesAreEqual(oldTree, newTree))
+    );
+
+    console.log('Start finding new trees: ', new Date().toISOString());
+    const addedTrees = newTrees.filter(
+        newTree => !oldTrees.some(oldTree => treesAreSame(oldTree, newTree))
+    );
+
+    console.log('Done: ', new Date().toISOString());
 
     return {
         deletedTrees,
@@ -98,7 +127,7 @@ async function deleteFromDb(dbClient: Client, trees: TreeDbRecord[]) {
 }
 
 
-async function updateDb(dbClient: Client, trees: TreeRecord[]) {
+async function updateDb(dbClient: Client, trees: TreeDbRecord[]) {
 
     await dbClient.query(`
         drop table if exists updated_trees_tmp;
@@ -121,8 +150,6 @@ async function updateDb(dbClient: Client, trees: TreeRecord[]) {
         );
     `);
 
-    const records = trees.map(mapToDbRecord);
-
     await dbClient.query(`
         insert into updated_trees_tmp (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
                            baumhoehe, pflanzjahr, geom, gmlid)
@@ -141,7 +168,7 @@ async function updateDb(dbClient: Client, trees: TreeRecord[]) {
                geom,
                gmlid
         from json_populate_recordset(null::trees, $1::JSON)
-    `, [JSON.stringify(records)]);
+    `, [JSON.stringify(trees)]);
 
     await dbClient.query(`
         update trees
@@ -159,7 +186,7 @@ async function updateDb(dbClient: Client, trees: TreeRecord[]) {
             pflanzjahr = updated_trees_tmp.pflanzjahr,
             geom = updated_trees_tmp.geom
         from updated_trees_tmp
-        where updated_trees_tmp.id = trees.id
+        where updated_trees_tmp.gmlid = trees.gmlid
     `);
 
     await dbClient.query('drop table updated_trees_tmp;');
@@ -167,9 +194,7 @@ async function updateDb(dbClient: Client, trees: TreeRecord[]) {
 }
 
 
-async function addToDb(dbClient: Client, trees: TreeRecord[]) {
-
-    const records = trees.map(mapToDbRecord);
+async function addToDb(dbClient: Client, trees: TreeDbRecord[]) {
 
     await dbClient.query(`
         insert into trees (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
@@ -189,7 +214,7 @@ async function addToDb(dbClient: Client, trees: TreeRecord[]) {
                geom,
                gmlid
         from json_populate_recordset(null::trees, $1::JSON)
-    `, [JSON.stringify(records)]);
+    `, [JSON.stringify(trees)]);
 
 }
 
@@ -231,7 +256,7 @@ function mapToClassification(input: string): TreeClassification {
     await dbClient.connect();
 
     const oldTreeData = await readOldTreeData(dbClient);
-    const newTreeData = await collectTrees();
+    const newTreeData = (await collectTrees()).map(mapToDbRecord);
     const { updatedTrees, deletedTrees, addedTrees } = await compareTreeData(newTreeData, oldTreeData);
 
     await deleteFromDb(dbClient, deletedTrees);
