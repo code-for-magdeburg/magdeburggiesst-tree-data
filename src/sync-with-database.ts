@@ -27,8 +27,8 @@ async function compareTreeData(newTrees: TreeDbRecord[], oldTrees: TreeDbRecord[
 
     const treesAreSame = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean => tree1.gmlid === tree2.gmlid;
     const treesAreEqual = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean =>
-        tree1.lat !== tree2.lng
-        || tree1.lng !== tree2.lat
+        tree1.lat !== tree2.lat
+        || tree1.lng !== tree2.lng
         || tree1.artdtsch !== tree2.artdtsch
         || tree1.artbot !== tree2.artbot
         || tree1.gattungdeutsch !== tree2.gattungdeutsch
@@ -173,8 +173,8 @@ async function updateDb(dbClient: Client, trees: TreeDbRecord[]) {
     await dbClient.query(`
         update trees
         set
-            lat = updated_trees_tmp.lng, -- HINT: latitude and longitude are swapped on purpose 
-            lng = updated_trees_tmp.lat, -- due to a known bug in GdK sources: https://github.com/technologiestiftung/giessdenkiez-de-postgres-api/issues/67
+            lat = updated_trees_tmp.lat, 
+            lng = updated_trees_tmp.lng,
             artdtsch = updated_trees_tmp.artdtsch,
             artbot = updated_trees_tmp.artbot,
             gattungdeutsch = updated_trees_tmp.gattungdeutsch,
@@ -200,8 +200,8 @@ async function addToDb(dbClient: Client, trees: TreeDbRecord[]) {
         insert into trees (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
                            baumhoehe, pflanzjahr, geom, gmlid)
         select id,
-               lng, -- HINT: latitude and longitude are swapped on purpose
-               lat, -- due to a known bug in GdK sources: https://github.com/technologiestiftung/giessdenkiez-de-postgres-api/issues/67
+               lat,
+               lng,
                artdtsch,
                artbot,
                gattungdeutsch,
