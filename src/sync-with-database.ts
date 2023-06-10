@@ -1,10 +1,15 @@
-import { loadTrees } from './load-trees';
-import { TreeClassification, TreeDbRecord, TreeRecord } from './model';
+import { TreeDbRecord, TreeRecord } from './model';
 import { Client } from 'pg';
 import * as dotenv from 'dotenv';
 import * as process from 'process';
-import { GENUS_MAP } from './genera';
-import { parse } from 'papaparse';
+import { MagdeburgLoadingStrategy } from './loading-strategies/magdeburg-loading-strategy';
+import { TestLoadingStrategy } from './loading-strategies/test-loading-strategy';
+import { MagdeburgConversionStrategy } from './conversion-strategies/magdeburg-conversion-strategy';
+import { TestConversionStrategy } from './conversion-strategies/test-conversion-strategy';
+import { ILoadingStrategy } from './loading-strategies/loading-strategy';
+import { IConversionStrategy } from './conversion-strategies/conversion-strategy';
+import { GoogleSheetLoadingStrategy } from './loading-strategies/google-sheet-loading-strategy';
+import { GoogleSheetConversionStrategy } from './conversion-strategies/google-sheet-conversion-strategy';
 
 
 dotenv.config();
@@ -15,6 +20,50 @@ type TreeDataComparisonResult = {
     updatedTrees: TreeDbRecord[];
     addedTrees: TreeDbRecord[];
 };
+
+
+type StrategyKey = 'magdeburg' | 'test' | 'google-sheet';
+
+
+const LOADING_STRATEGIES: Map<StrategyKey, ILoadingStrategy> = new Map(
+    [
+        ['magdeburg', new MagdeburgLoadingStrategy()],
+        ['test', new TestLoadingStrategy()],
+        ['google-sheet', new GoogleSheetLoadingStrategy()]
+    ]
+);
+
+
+const CONVERSION_STRATEGIES: Map<StrategyKey, IConversionStrategy> = new Map(
+    [
+        ['magdeburg', new MagdeburgConversionStrategy()],
+        ['test', new TestConversionStrategy()],
+        ['google-sheet', new GoogleSheetConversionStrategy()]
+    ]
+);
+
+
+
+function loadTreeData(strategyKey: StrategyKey, importingOptions: string[]): Promise<TreeRecord[]> {
+
+    const strategy = LOADING_STRATEGIES.get(strategyKey);
+    if (!strategy) {
+        throw new Error(`Unknown strategy ${strategyKey}`);
+    }
+    return strategy.load(importingOptions);
+
+}
+
+
+function convertTreeData(strategyKey: StrategyKey, trees: TreeRecord[], source: string): TreeDbRecord[] {
+
+    const strategy = CONVERSION_STRATEGIES.get(strategyKey);
+    if (!strategy) {
+        throw new Error(`Unknown strategy ${strategyKey}`);
+    }
+    return strategy.convertTreeData(trees, source);
+
+}
 
 
 async function readOldTreeData(dbClient: Client, source: string): Promise<TreeDbRecord[]> {
@@ -70,32 +119,6 @@ async function compareTreeData(newTrees: TreeDbRecord[], oldTrees: TreeDbRecord[
         addedTrees
     };
 
-}
-
-
-function mapToDbRecord(tree: TreeRecord, source: string): TreeDbRecord {
-    const classification = mapToClassification(tree.genus);
-    const genus = GENUS_MAP.get(classification.genus);
-    if (!genus) {
-        console.warn(`Classification for ${tree.internal_ref} not found. Genus: ${tree.genus}`);
-    }
-    return {
-        id: tree.internal_ref,
-        lat: `${tree.lat}`,
-        lng: `${tree.lon}`,
-        artdtsch: classification.common,
-        artbot: classification.scientific,
-        gattungdeutsch: genus ? genus.displayName : null,
-        gattung: classification.genus,
-        strname: tree.address,
-        kronedurch: `${tree.crown}`,
-        stammumfg: `${Math.round(tree.dbh * Math.PI)}`,
-        baumhoehe: `${tree.height}`,
-        geom: `SRID=4326;POINT(${tree.lon} ${tree.lat})`,
-        pflanzjahr: tree.planted,
-        gmlid: tree.ref,
-        source
-    };
 }
 
 
@@ -227,31 +250,10 @@ async function addToDb(dbClient: Client, trees: TreeDbRecord[], source: string) 
 }
 
 
-function mapToClassification(input: string): TreeClassification {
+async function run(source: string, importingStrategy: StrategyKey, importingOptions: string[]): Promise<TreeDataComparisonResult> {
 
-    if (!input) {
-        return { fullname: null, genus: null, species: null, variety: null, scientific: null, common: null };
-    }
-
-    const parts = input.split(',');
-    const scientific = parts.length > 0 ? parts[0].trim() : '';
-    const common = parts.length > 1 ? parts[1].trim() : scientific;
-
-    const scientificParts = (parse(scientific, { delimiter: ' ', quoteChar: '"' }).data)[0] as string[];
-    const genus = scientificParts[0];
-    const species = scientificParts[1].toLowerCase() === 'x'
-        ? `x ${scientificParts[2]}`
-        : scientificParts[1];
-    const variety = scientificParts[1].toLowerCase() === 'x'
-        ? scientificParts.slice(3).join(' ')
-        : scientificParts.slice(2).join(' ');
-
-    return { fullname: input, genus, species, variety, scientific, common };
-
-}
-
-
-async function run(source: string, loadingStrategy: string, inputCsvFile: string): Promise<TreeDataComparisonResult> {
+    const loadedNewTreeData = await loadTreeData(importingStrategy, importingOptions);
+    const convertedNewTreeData = convertTreeData(importingStrategy, loadedNewTreeData, source);
 
     const dbClient = new Client({
         user: process.env.PG_USER,
@@ -263,9 +265,8 @@ async function run(source: string, loadingStrategy: string, inputCsvFile: string
 
     await dbClient.connect();
 
-    const newTreeData = loadTrees(loadingStrategy, inputCsvFile).map(tree => mapToDbRecord(tree, source));
     const oldTreeData = await readOldTreeData(dbClient, source);
-    const comparisonResult = await compareTreeData(newTreeData, oldTreeData);
+    const comparisonResult = await compareTreeData(convertedNewTreeData, oldTreeData);
 
     await deleteFromDb(dbClient, comparisonResult.deletedTrees);
     await updateDb(dbClient, comparisonResult.updatedTrees, source);
@@ -278,11 +279,16 @@ async function run(source: string, loadingStrategy: string, inputCsvFile: string
 }
 
 
-//run('ls', 'magdeburg-2022', './data/2022/2022_Liegenschaftsservice.csv')
-//run('ls', 'magdeburg-2023', './data/2023/2023_Liegenschaftsservice.csv')
-//run('sfm', 'magdeburg-2022', './data/2022/2022_SFM.csv')
-//run('sfm', 'magdeburg-2023', './data/2023/2023_SFM.csv')
-run('test', 'test', './data/test.csv')
+//run('ls', 'magdeburg', ['2022', './data/2022/2022_Liegenschaftsservice.csv'])
+//run('ls', 'magdeburg', ['2023', './data/2023/2023_Liegenschaftsservice.csv'])
+//run('sfm', 'magdeburg', ['2022', './data/2022/2022_SFM.csv'])
+//run('sfm', 'magdeburg', ['2023', './data/2023/2023_SFM.csv'])
+run('test', 'test', [])
+// run(
+//     'test-google-sheet',
+//     'google-sheet',
+//     ['https://docs.google.com/spreadsheets/d/e/2PACX-1vSZCQj6Ph4kibmaNQaJF2alcHw3c5lcdqHbR8DVPyaBR861THe7UrJjiJMppgL0LIif8xUgcadFJ-6M/pub?gid=0&single=true&output=csv']
+// )
     .then(result => {
         console.log(`Deleted: ${result.deletedTrees.length}`);
         console.log(`Updated: ${result.updatedTrees.length}`);
