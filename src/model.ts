@@ -30,6 +30,7 @@ export type TreeDbRecord = {
     geom: string;
     pflanzjahr: number;
     gmlid: string;
+    source: string;
 };
 
 

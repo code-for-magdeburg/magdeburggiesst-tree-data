@@ -1,6 +1,7 @@
 import { TreeRecord } from './model';
 import * as fs from 'fs';
 import { parse, ParseConfig } from 'papaparse';
+import { nanoid } from 'nanoid';
 
 
 type OriginalTree2023CsvRecord = {
@@ -39,17 +40,12 @@ const GENUS_TRANSLATE_MAP = new Map([
 ]);
 
 
-export function merge2023(allTrees: TreeRecord[]): void {
+export function readMagdeburg2023(inputCsvFile: string): TreeRecord[] {
 
-    const treesLiegenschaftsservice = loadTrees2023('./data/2023/2023_Liegenschaftsservice.csv');
-    const treesSfm = loadTrees2023('./data/2023/2023_SFM.csv');
-    const allTrees2023 = [...treesLiegenschaftsservice, ...treesSfm];
-
-    const validTrees = filterInvalidTrees(allTrees2023);
+    const loadedTrees = loadTrees2023(inputCsvFile);
+    const validTrees = filterInvalidTrees(loadedTrees);
     const fixedTrees = fixTrees(validTrees);
-    const transformedTrees = transformTrees(fixedTrees);
-
-    allTrees.push(...transformedTrees);
+    return transformTrees(fixedTrees);
 
 }
 
@@ -139,7 +135,7 @@ function transformTrees(trees: OriginalTree2023CsvRecord[]): TreeRecord[] {
 
         const id = createTreeRef(tree);
         return {
-            internal_ref: `23_${id}`,
+            internal_ref: nanoid(),
             ref: id,
             location: tree.gebiet,
             address: tree.strasse,

@@ -1,4 +1,4 @@
-import { collectTrees } from './collect-trees';
+import { loadTrees } from './load-trees';
 import { TreeClassification, TreeDbRecord, TreeRecord } from './model';
 import { Client } from 'pg';
 import * as dotenv from 'dotenv';
@@ -17,16 +17,20 @@ type TreeDataComparisonResult = {
 };
 
 
-async function readOldTreeData(dbClient: Client): Promise<TreeDbRecord[]> {
-    const { rows } = await dbClient.query('select * from trees');
+async function readOldTreeData(dbClient: Client, source: string): Promise<TreeDbRecord[]> {
+    const { rows } = await dbClient.query(
+        'select * from trees where source = $1',
+        [source]
+    );
     return rows;
 }
 
 
 async function compareTreeData(newTrees: TreeDbRecord[], oldTrees: TreeDbRecord[]): Promise<TreeDataComparisonResult> {
 
-    const treesAreSame = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean => tree1.gmlid === tree2.gmlid;
-    const treesAreEqual = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean =>
+    const treesAreSame = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean =>
+        tree1.gmlid === tree2.gmlid && tree1.source === tree2.source
+    const propertiesAreDifferent = (tree1: TreeDbRecord, tree2: TreeDbRecord): boolean =>
         tree1.lat !== tree2.lat
         || tree1.lng !== tree2.lng
         || tree1.artdtsch !== tree2.artdtsch
@@ -48,7 +52,9 @@ async function compareTreeData(newTrees: TreeDbRecord[], oldTrees: TreeDbRecord[
 
     console.log('Start finding changed trees: ', new Date().toISOString());
     const updatedTrees = newTrees.filter(newTree =>
-        oldTrees.some(oldTree => treesAreSame(oldTree, newTree) && treesAreEqual(oldTree, newTree))
+        oldTrees.some(oldTree =>
+            treesAreSame(oldTree, newTree) && propertiesAreDifferent(oldTree, newTree)
+        )
     );
 
     console.log('Start finding new trees: ', new Date().toISOString());
@@ -67,7 +73,7 @@ async function compareTreeData(newTrees: TreeDbRecord[], oldTrees: TreeDbRecord[
 }
 
 
-function mapToDbRecord(tree: TreeRecord): TreeDbRecord {
+function mapToDbRecord(tree: TreeRecord, source: string): TreeDbRecord {
     const classification = mapToClassification(tree.genus);
     const genus = GENUS_MAP.get(classification.genus);
     if (!genus) {
@@ -87,7 +93,8 @@ function mapToDbRecord(tree: TreeRecord): TreeDbRecord {
         baumhoehe: `${tree.height}`,
         geom: `SRID=4326;POINT(${tree.lon} ${tree.lat})`,
         pflanzjahr: tree.planted,
-        gmlid: tree.ref
+        gmlid: tree.ref,
+        source
     };
 }
 
@@ -127,7 +134,7 @@ async function deleteFromDb(dbClient: Client, trees: TreeDbRecord[]) {
 }
 
 
-async function updateDb(dbClient: Client, trees: TreeDbRecord[]) {
+async function updateDb(dbClient: Client, trees: TreeDbRecord[], source: string) {
 
     await dbClient.query(`
         drop table if exists updated_trees_tmp;
@@ -186,19 +193,19 @@ async function updateDb(dbClient: Client, trees: TreeDbRecord[]) {
             pflanzjahr = updated_trees_tmp.pflanzjahr,
             geom = updated_trees_tmp.geom
         from updated_trees_tmp
-        where updated_trees_tmp.gmlid = trees.gmlid
-    `);
+        where updated_trees_tmp.gmlid = trees.gmlid and source = $1
+    `, [source]);
 
     await dbClient.query('drop table updated_trees_tmp;');
 
 }
 
 
-async function addToDb(dbClient: Client, trees: TreeDbRecord[]) {
+async function addToDb(dbClient: Client, trees: TreeDbRecord[], source: string) {
 
     await dbClient.query(`
         insert into trees (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
-                           baumhoehe, pflanzjahr, geom, gmlid)
+                           baumhoehe, pflanzjahr, geom, gmlid, source)
         select id,
                lat,
                lng,
@@ -212,7 +219,8 @@ async function addToDb(dbClient: Client, trees: TreeDbRecord[]) {
                baumhoehe,
                pflanzjahr,
                geom,
-               gmlid
+               gmlid,
+               source
         from json_populate_recordset(null::trees, $1::JSON)
     `, [JSON.stringify(trees)]);
 
@@ -243,7 +251,7 @@ function mapToClassification(input: string): TreeClassification {
 }
 
 
-(async () => {
+async function run(source: string, loadingStrategy: string, inputCsvFile: string): Promise<TreeDataComparisonResult> {
 
     const dbClient = new Client({
         user: process.env.PG_USER,
@@ -255,19 +263,30 @@ function mapToClassification(input: string): TreeClassification {
 
     await dbClient.connect();
 
-    const oldTreeData = await readOldTreeData(dbClient);
-    const newTreeData = (await collectTrees()).map(mapToDbRecord);
-    const { updatedTrees, deletedTrees, addedTrees } = await compareTreeData(newTreeData, oldTreeData);
+    const newTreeData = loadTrees(loadingStrategy, inputCsvFile).map(tree => mapToDbRecord(tree, source));
+    const oldTreeData = await readOldTreeData(dbClient, source);
+    const comparisonResult = await compareTreeData(newTreeData, oldTreeData);
 
-    await deleteFromDb(dbClient, deletedTrees);
-    await updateDb(dbClient, updatedTrees);
-    await addToDb(dbClient, addedTrees);
+    await deleteFromDb(dbClient, comparisonResult.deletedTrees);
+    await updateDb(dbClient, comparisonResult.updatedTrees, source);
+    await addToDb(dbClient, comparisonResult.addedTrees, source);
 
     await dbClient.end();
 
-    console.log(`Deleted: ${deletedTrees.length}`);
-    console.log(`Updated: ${updatedTrees.length}`);
-    console.log(`Added: ${addedTrees.length}`);
-    console.log('Done.');
+    return comparisonResult;
 
-})();
+}
+
+
+//run('ls', 'magdeburg-2022', './data/2022/2022_Liegenschaftsservice.csv')
+//run('ls', 'magdeburg-2023', './data/2023/2023_Liegenschaftsservice.csv')
+//run('sfm', 'magdeburg-2022', './data/2022/2022_SFM.csv')
+//run('sfm', 'magdeburg-2023', './data/2023/2023_SFM.csv')
+run('test', 'test', './data/test.csv')
+    .then(result => {
+        console.log(`Deleted: ${result.deletedTrees.length}`);
+        console.log(`Updated: ${result.updatedTrees.length}`);
+        console.log(`Added: ${result.addedTrees.length}`);
+        console.log('Done.');
+    })
+    .catch(console.error);
