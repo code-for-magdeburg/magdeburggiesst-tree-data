@@ -1,4 +1,4 @@
-import { TreeRecord } from './model';
+import { TreeClassification, TreeRecord } from './model';
 import * as fs from 'fs';
 import { parse, ParseConfig } from 'papaparse';
 import { nanoid } from 'nanoid';
@@ -131,15 +131,17 @@ function transformTrees(trees: OriginalTree2022CsvRecord[]): TreeRecord[] {
 
     return trees.map(tree => {
 
-        const id = createTreeRef(tree);
+        const classification = mapToClassification(tree.Gattung);
         return {
             internal_ref: nanoid(),
-            ref: id,
+            ref: createTreeRef(tree),
             location: tree.gebiet,
             address: tree.strasse,
             lat: tree.latitude,
             lon: tree.longitude,
-            genus: tree.Gattung,
+            genus: classification.genus,
+            species: classification.scientific,
+            common: classification.common,
             height: tree.Hoehe,
             crown: tree.Kronendurchm,
             dbh: tree.Stammdurchm,
@@ -147,6 +149,30 @@ function transformTrees(trees: OriginalTree2022CsvRecord[]): TreeRecord[] {
         };
 
     });
+
+}
+
+
+function mapToClassification(input: string): TreeClassification {
+
+    if (!input) {
+        return { fullname: null, genus: null, species: null, variety: null, scientific: null, common: null };
+    }
+
+    const parts = input.split(',');
+    const scientific = parts.length > 0 ? parts[0].trim() : '';
+    const common = parts.length > 1 ? parts[1].trim() : scientific;
+
+    const scientificParts = (parse(scientific, { delimiter: ' ', quoteChar: '"' }).data)[0] as string[];
+    const genus = scientificParts[0];
+    const species = scientificParts[1].toLowerCase() === 'x'
+        ? `x ${scientificParts[2]}`
+        : scientificParts[1];
+    const variety = scientificParts[1].toLowerCase() === 'x'
+        ? scientificParts.slice(3).join(' ')
+        : scientificParts.slice(2).join(' ');
+
+    return { fullname: input, genus, species, variety, scientific, common };
 
 }
 

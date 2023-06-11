@@ -8,6 +8,8 @@ export type TreeRecord = {
     lat: number;
     lon: number;
     genus: string;
+    species: string;
+    common: string;
     height: number;
     crown: number;
     dbh: number;

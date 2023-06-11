@@ -4,12 +4,9 @@ import * as dotenv from 'dotenv';
 import * as process from 'process';
 import { MagdeburgLoadingStrategy } from './loading-strategies/magdeburg-loading-strategy';
 import { TestLoadingStrategy } from './loading-strategies/test-loading-strategy';
-import { MagdeburgConversionStrategy } from './conversion-strategies/magdeburg-conversion-strategy';
-import { TestConversionStrategy } from './conversion-strategies/test-conversion-strategy';
 import { ILoadingStrategy } from './loading-strategies/loading-strategy';
-import { IConversionStrategy } from './conversion-strategies/conversion-strategy';
 import { GoogleSheetLoadingStrategy } from './loading-strategies/google-sheet-loading-strategy';
-import { GoogleSheetConversionStrategy } from './conversion-strategies/google-sheet-conversion-strategy';
+import { GENUS_MAP } from './genera';
 
 
 dotenv.config();
@@ -34,16 +31,6 @@ const LOADING_STRATEGIES: Map<StrategyKey, ILoadingStrategy> = new Map(
 );
 
 
-const CONVERSION_STRATEGIES: Map<StrategyKey, IConversionStrategy> = new Map(
-    [
-        ['magdeburg', new MagdeburgConversionStrategy()],
-        ['test', new TestConversionStrategy()],
-        ['google-sheet', new GoogleSheetConversionStrategy()]
-    ]
-);
-
-
-
 function loadTreeData(strategyKey: StrategyKey, importingOptions: string[]): Promise<TreeRecord[]> {
 
     const strategy = LOADING_STRATEGIES.get(strategyKey);
@@ -55,14 +42,33 @@ function loadTreeData(strategyKey: StrategyKey, importingOptions: string[]): Pro
 }
 
 
-function convertTreeData(strategyKey: StrategyKey, trees: TreeRecord[], source: string): TreeDbRecord[] {
+function convertTreeData(trees: TreeRecord[], source: string): TreeDbRecord[] {
 
-    const strategy = CONVERSION_STRATEGIES.get(strategyKey);
-    if (!strategy) {
-        throw new Error(`Unknown strategy ${strategyKey}`);
-    }
-    return strategy.convertTreeData(trees, source);
+    return trees.map(tree => {
 
+        const genusDescription = GENUS_MAP.get(tree.genus);
+        if (!genusDescription) {
+            console.warn(`No genus description found for genus "${tree.genus}" (tree ${tree.ref})`);
+        }
+
+        return {
+            id: tree.internal_ref,
+            lat: `${tree.lat}`,
+            lng: `${tree.lon}`,
+            artdtsch: tree.common,
+            artbot: tree.species,
+            gattungdeutsch: genusDescription ? genusDescription.displayName : null,
+            gattung: tree.genus,
+            strname: tree.address,
+            kronedurch: `${tree.crown}`,
+            stammumfg: `${Math.round(tree.dbh * Math.PI)}`,
+            baumhoehe: `${tree.height}`,
+            geom: `SRID=4326;POINT(${tree.lon} ${tree.lat})`,
+            pflanzjahr: tree.planted,
+            gmlid: tree.ref,
+            source
+        };
+    });
 }
 
 
@@ -253,7 +259,7 @@ async function addToDb(dbClient: Client, trees: TreeDbRecord[], source: string) 
 async function run(source: string, importingStrategy: StrategyKey, importingOptions: string[]): Promise<TreeDataComparisonResult> {
 
     const loadedNewTreeData = await loadTreeData(importingStrategy, importingOptions);
-    const convertedNewTreeData = convertTreeData(importingStrategy, loadedNewTreeData, source);
+    const convertedNewTreeData = convertTreeData(loadedNewTreeData, source);
 
     const dbClient = new Client({
         user: process.env.PG_USER,
