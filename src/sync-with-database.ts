@@ -289,12 +289,21 @@ async function run(source: string, importingStrategy: StrategyKey, importingOpti
 //run('ls', 'magdeburg', ['2023', './data/2023/2023_Liegenschaftsservice.csv'])
 //run('sfm', 'magdeburg', ['2022', './data/2022/2022_SFM.csv'])
 //run('sfm', 'magdeburg', ['2023', './data/2023/2023_SFM.csv'])
+
 run('test', 'test', [])
+
 // run(
 //     'test-google-sheet',
 //     'google-sheet',
 //     ['https://docs.google.com/spreadsheets/d/e/2PACX-1vSZCQj6Ph4kibmaNQaJF2alcHw3c5lcdqHbR8DVPyaBR861THe7UrJjiJMppgL0LIif8xUgcadFJ-6M/pub?gid=0&single=true&output=csv']
 // )
+
+// run(
+//     'otto-pflanzt',
+//     'google-sheet',
+//     ['https://docs.google.com/spreadsheets/d/e/2PACX-1vQBkh8OA6UJ2DgUiHNN71x_z2O0ZjVnBNZ5_nvmAaS1VfshzpV26zpCMH4IUQ_yes20TcCMvxUzoUzx/pub?gid=0&single=true&output=csv']
+// )
+
     .then(result => {
         console.log(`Deleted: ${result.deletedTrees.length}`);
         console.log(`Updated: ${result.updatedTrees.length}`);
