@@ -139,6 +139,11 @@ async function deleteFromDb(dbClient: Client, trees: TreeDbRecord[]) {
     `);
 
     await dbClient.query(`
+        insert into deleted_trees_tmp (id)
+        select id from json_populate_recordset(null::deleted_trees_tmp, $1::JSON);
+    `, [JSON.stringify(trees.map(tree => ({ id: tree.id })))]);
+
+    await dbClient.query(`
         delete from trees_adopted
         where tree_id in (select id from deleted_trees_tmp)
     `);
@@ -147,11 +152,6 @@ async function deleteFromDb(dbClient: Client, trees: TreeDbRecord[]) {
         delete from trees_watered
         where tree_id in (select id from deleted_trees_tmp)
     `);
-
-    await dbClient.query(`
-        insert into deleted_trees_tmp (id)
-        select id from json_populate_recordset(null::deleted_trees_tmp, $1::JSON);
-    `, [JSON.stringify(trees.map(tree => ({ id: tree.id })))]);
 
     await dbClient.query(`
         delete from trees
@@ -163,7 +163,7 @@ async function deleteFromDb(dbClient: Client, trees: TreeDbRecord[]) {
 }
 
 
-async function updateDb(dbClient: Client, trees: TreeDbRecord[], source: string) {
+async function updateDb(dbClient: Client, trees: TreeDbRecord[]) {
 
     await dbClient.query(`
         drop table if exists updated_trees_tmp;
@@ -182,13 +182,14 @@ async function updateDb(dbClient: Client, trees: TreeDbRecord[], source: string)
             baumhoehe text,
             pflanzjahr integer,
             geom geometry(Point, 4326),
-            gmlid text
+            gmlid text,
+            source text
         );
     `);
 
     await dbClient.query(`
         insert into updated_trees_tmp (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
-                           baumhoehe, pflanzjahr, geom, gmlid)
+                           baumhoehe, pflanzjahr, geom, gmlid, source)
         select id,
                lat,
                lng,
@@ -202,7 +203,8 @@ async function updateDb(dbClient: Client, trees: TreeDbRecord[], source: string)
                baumhoehe,
                pflanzjahr,
                geom,
-               gmlid
+               gmlid,
+               source
         from json_populate_recordset(null::trees, $1::JSON)
     `, [JSON.stringify(trees)]);
 
@@ -222,15 +224,15 @@ async function updateDb(dbClient: Client, trees: TreeDbRecord[], source: string)
             pflanzjahr = updated_trees_tmp.pflanzjahr,
             geom = updated_trees_tmp.geom
         from updated_trees_tmp
-        where updated_trees_tmp.gmlid = trees.gmlid and source = $1
-    `, [source]);
+        where updated_trees_tmp.gmlid = trees.gmlid and updated_trees_tmp.source = trees.source
+    `);
 
     await dbClient.query('drop table updated_trees_tmp;');
 
 }
 
 
-async function addToDb(dbClient: Client, trees: TreeDbRecord[], source: string) {
+async function addToDb(dbClient: Client, trees: TreeDbRecord[]) {
 
     await dbClient.query(`
         insert into trees (id, lat, lng, artdtsch, artbot, gattungdeutsch, gattung, strname, kronedurch, stammumfg,
@@ -275,8 +277,8 @@ async function run(source: string, importingStrategy: StrategyKey, importingOpti
     const comparisonResult = await compareTreeData(convertedNewTreeData, oldTreeData);
 
     await deleteFromDb(dbClient, comparisonResult.deletedTrees);
-    await updateDb(dbClient, comparisonResult.updatedTrees, source);
-    await addToDb(dbClient, comparisonResult.addedTrees, source);
+    await updateDb(dbClient, comparisonResult.updatedTrees);
+    await addToDb(dbClient, comparisonResult.addedTrees);
 
     await dbClient.end();
 
@@ -286,15 +288,24 @@ async function run(source: string, importingStrategy: StrategyKey, importingOpti
 
 
 //run('ls', 'magdeburg', ['2022', './data/2022/2022_Liegenschaftsservice.csv'])
-//run('ls', 'magdeburg', ['2023', './data/2023/2023_Liegenschaftsservice.csv'])
 //run('sfm', 'magdeburg', ['2022', './data/2022/2022_SFM.csv'])
+//run('ls', 'magdeburg', ['2023', './data/2023/2023_Liegenschaftsservice.csv'])
 //run('sfm', 'magdeburg', ['2023', './data/2023/2023_SFM.csv'])
+
 run('test', 'test', [])
+
 // run(
 //     'test-google-sheet',
 //     'google-sheet',
 //     ['https://docs.google.com/spreadsheets/d/e/2PACX-1vSZCQj6Ph4kibmaNQaJF2alcHw3c5lcdqHbR8DVPyaBR861THe7UrJjiJMppgL0LIif8xUgcadFJ-6M/pub?gid=0&single=true&output=csv']
 // )
+
+// run(
+//     'otto-pflanzt',
+//     'google-sheet',
+//     ['https://docs.google.com/spreadsheets/d/e/2PACX-1vQBkh8OA6UJ2DgUiHNN71x_z2O0ZjVnBNZ5_nvmAaS1VfshzpV26zpCMH4IUQ_yes20TcCMvxUzoUzx/pub?gid=0&single=true&output=csv']
+// )
+
     .then(result => {
         console.log(`Deleted: ${result.deletedTrees.length}`);
         console.log(`Updated: ${result.updatedTrees.length}`);
